@@ -1,0 +1,675 @@
+substitutions:
+  name: "hapcba-serverrack"
+  friendly_name: "HAPCBA serverrack"
+  update_intvl: 1000ms
+  
+
+# iiyama-prolite-tf2234mc
+# modelno plc2234
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2024.6.0
+  name_add_mac_suffix: false
+  project:
+    name: esphome.web
+    version: dev
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    version: recommended
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "qDX/Hr7y87kaj2i0+EUnA0AjaSpHzJVSkcwm2WWBi6I="
+
+ota:
+  platform: esphome
+  password: "00089e9b44456a6937ee245601c98f6f"
+
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2 
+  fast_connect: on
+  # Optional manual IP
+  #manual_ip: 
+  #  static_ip: 192.168.1.120  
+  #  gateway: 192.168.1.1
+  #  subnet: 255.255.255.0
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ${name}
+    password: "fallbackpw"
+
+captive_portal:
+
+dashboard_import:
+  package_import_url: github://esphome/example-configs/esphome-web/esp32.yaml@main
+  import_full_config: true
+
+# To have a "next url" for improv serial
+web_server:
+  version: 3
+  ota: false
+  id: "webserver_serverrack_controller"
+  auth:
+    username: user # !secret web_server_username
+    password: password # !secret web_server_password
+
+globals:
+  - id: glb_PWM_A
+    type: float
+    restore_value: yes
+    initial_value: '0'
+  
+  - id: glb_PWM_HA
+    type: float
+    restore_value: yes
+    initial_value: '0'
+
+number:
+
+  ## OPTIONAL:
+  # RECEIVE KP, KI and KD parameters from input_text.kx helpers in 
+  # Home Assistant. See the PID controller below
+  # These helper values will get saved to flash thus permanently over-riding 
+  # the initial values set in the PID below.
+
+  # KP
+  - platform: template
+    name: kp
+    icon: mdi:chart-bell-curve
+    restore_value: true
+    initial_value: 0.3
+    min_value: 0
+    max_value: 50
+    step: 0.001
+    optimistic: true
+    entity_category: config
+    set_action: 
+      lambda: |- 
+        id(console_thermostat).set_kp( x );
+
+  # KI
+  - platform: template
+    name: ki
+    icon: mdi:chart-bell-curve
+    restore_value: true
+    initial_value: 0.0015
+    min_value: 0
+    max_value: 50
+    step: 0.0001
+    optimistic: true
+    entity_category: config
+    set_action: 
+      lambda: id(console_thermostat).set_ki( x );
+
+  # KD
+  - platform: template
+    name: kd
+    icon: mdi:chart-bell-curve
+    restore_value: true
+    initial_value: 0.0
+    min_value: -50
+    max_value: 50
+    step: 0.001
+    optimistic: true
+    entity_category: config
+    set_action: 
+      lambda: id(console_thermostat).set_kd( x );
+
+  # Set threshold low
+  - platform: template
+    name: Deadband Threshold Low
+    icon: mdi:chart-bell-curve
+    restore_value: true
+    initial_value: -1.0
+    min_value: -20
+    max_value: 0
+    step: 0.1
+    optimistic: true
+    entity_category: config
+    set_action: 
+      lambda: id(console_thermostat).set_threshold_low( x );
+
+  # Set threshold high
+  - platform: template
+    name: Deadband Threshold High
+    icon: mdi:chart-bell-curve
+    restore_value: true
+    initial_value: 0.4
+    min_value: 0
+    max_value: 20
+    step: 0.1
+    optimistic: true
+    entity_category: config
+    set_action: 
+      lambda: id(console_thermostat).set_threshold_high( x );
+
+  # Set ki multiplier
+  - platform: template
+    name: Deadband ki Multiplier
+    icon: mdi:chart-bell-curve
+    restore_value: true
+    initial_value: 0.04
+    min_value: 0
+    max_value: .2
+    step: 0.01
+    optimistic: true
+    entity_category: config
+    set_action: 
+      lambda: id(console_thermostat).set_ki_multiplier( x );
+
+
+# Restart every day at 12:30am. 
+# I've had some memory issues lockup 
+# the device after a couple weeks
+time:
+  - platform: homeassistant
+    on_time:
+      # Every morning at 12:30am
+    - seconds: 0
+      minutes: 30
+      hours: 0
+      then:
+       - switch.turn_on: console_fan_restart
+
+
+# I was able to find good KP,KI,KD values manually, per the instructions,
+# but you can try pressing the autotune button from home assistant and copying the 
+# values it produces. 
+# See more at: https://esphome.io/components/climate/pid.html#climate-pid-autotune-action
+button:
+- platform: template
+  name: "PID Climate Autotune"
+  entity_category: config
+  on_press: 
+    - climate.pid.autotune: console_thermostat
+
+- platform: template
+  name: "LED strip toggle"
+  id: btn_LEDstrip
+  internal: true
+  on_press: 
+    - light.toggle: light_LEDstrip
+
+
+# GPIO8 & GPIO9 for ESP32-C3 supermini, both strapping pins
+i2c:
+  sda: GPIO21
+  scl: GPIO22 
+  scan: true
+  id: bus_a
+
+one_wire:
+  - platform: gpio
+    id: DS18B20_pin1
+    pin: GPIO32
+
+  - platform: gpio
+    id: DS18B20_pin2
+    pin: GPIO33
+
+text_sensor:
+  # Send IP Address
+  - platform: wifi_info
+    ip_address:
+      name: $friendly_name IP Address
+
+  # Send Uptime in raw seconds
+  - platform: template
+    name: $friendly_name Uptime
+    id: uptime_human
+    entity_category: diagnostic
+    icon: mdi:clock-start
+
+sensor:
+  - platform: template
+    name: $friendly_name p term
+    id: p_term
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+    accuracy_decimals: 2
+
+  - platform: template
+    name: $friendly_name i term
+    id: i_term
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+    accuracy_decimals: 2
+
+  - platform: template
+    name: $friendly_name d term
+    id: d_term
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+    accuracy_decimals: 2
+
+  - platform: template
+    name: $friendly_name output value
+    unit_of_measurement: "%"
+    id: o_term
+    entity_category: diagnostic
+    accuracy_decimals: 2
+
+  - platform: template
+    name: $friendly_name error value
+    unit_of_measurement: "°C"
+    device_class: temperature
+    entity_category: diagnostic
+    id: e_term
+    accuracy_decimals: 2
+
+  - platform: template
+    name: $friendly_name is in deadband
+    id: in_deadband_term
+    entity_category: diagnostic
+    accuracy_decimals: 0
+
+  - platform: template
+    name: "Fan Speed"
+    unit_of_measurement: "%"
+    id: fan_speed_pwm_voltage
+    entity_category: diagnostic
+    accuracy_decimals: 0
+
+  - platform: sht4x
+    update_interval: $update_intvl
+    temperature:
+      name: "SHT41 Temperature"
+      id: sht40_temp
+      accuracy_decimals: 1
+      filters:
+      - filter_out: 0.0
+      - median:
+          window_size: 3
+          send_every: 3
+          send_first_at: 1
+    humidity:
+      name: "SHT41 Relative Humidity"
+      id: sht40_humidity
+      accuracy_decimals: 1
+      filters:
+      - filter_out: 0.0
+      - median:
+          window_size: 3
+          send_every: 3
+          send_first_at: 1
+  
+  - platform: veml7700
+    address: 0x10
+    update_interval: $update_intvl
+    # short variant of sensor definition:
+    ambient_light: 
+      name: "Ambient light"
+      filters:
+      - calibrate_linear:
+          method: least_squares
+          datapoints:
+          # Map 0.0 (from sensor) to 1.0 (true value)
+            - 0.0 -> 0.0
+            - 3.0 -> 5.0
+            - 40.0 -> 120
+    # longer variant of sensor definition:
+    actual_gain:
+      internal: true
+      entity_category: diagnostic
+      name: "Actual gain"
+
+  - platform: dallas_temp
+    id: DS18B20_1
+    one_wire_id: DS18B20_pin1
+    name: "DS18B20 Temperature 1"
+    update_interval: $update_intvl
+
+  - platform: dallas_temp
+    id: DS18B20_2
+    one_wire_id: DS18B20_pin2
+    name: "DS18B20 Temperature 2"
+    update_interval: $update_intvl
+
+  - platform: bmp280_i2c
+    address: 0x77
+    update_interval: $update_intvl
+    temperature:
+      name: "BMP temp"
+      id: bmp20_temp
+      oversampling: 2x
+      accuracy_decimals: 2
+      disabled_by_default: true
+      state_class: measurement
+    pressure:
+      name: "BMP Pressure"
+      id: bmp20_pressure
+      accuracy_decimals: 2
+      disabled_by_default: false
+      state_class: measurement
+
+  - platform: aht10
+    address: 0x38
+    update_interval: $update_intvl
+    temperature:
+      name: "AHT20 temp"
+      id: aht20_temp
+      accuracy_decimals: 2
+      filters:
+      - filter_out: 0.0
+      - median:
+          window_size: 3
+          send_every: 3
+          send_first_at: 1
+      disabled_by_default: true
+      state_class: measurement
+    humidity:
+      name: "AHT20 humidity"
+      id: aht20_humidity
+      accuracy_decimals: 2
+      filters:
+      - filter_out: 0.0
+      - median:
+          window_size: 3
+          send_every: 3
+          send_first_at: 1
+      disabled_by_default: true
+      state_class: measurement
+
+
+  - platform: combination
+    type: max
+    name: "Max Device Temperature"
+    id: max_temp
+    accuracy_decimals: 2
+    filters:
+         - exponential_moving_average:  
+             alpha: 0.1
+             send_every: 1
+    sources:
+      - source: sht40_temp
+      - source: DS18B20_1
+      - source: DS18B20_2
+
+  - platform: combination
+    type: median
+    name: "Median Air Temperature"
+    id: med_temp
+    accuracy_decimals: 2
+    filters:
+         - exponential_moving_average:  
+             alpha: 0.1
+             send_every: 1
+    sources:
+      - source: bmp20_temp
+      - source: aht20_temp
+      - source: sht40_temp
+      - source: sht40_temp
+
+  - platform: combination
+    type: median
+    name: "Median Humidity"
+    id: med_humidty
+    accuracy_decimals: 2
+    filters:
+         - exponential_moving_average:  
+             alpha: 0.1
+             send_every: 1
+    sources:
+      - source: aht20_humidity
+      - source: sht40_humidity
+
+  - platform: pulse_counter
+    name: "Fan 1 RPM"
+    id: "fan1_rpm"
+    unit_of_measurement: 'RPM'
+    pin:
+      number: GPIO25
+      inverted: false
+      mode: INPUT_PULLUP        # Pull-up is required for fan tach readings
+    count_mode:
+      rising_edge: INCREMENT    # Count only the rising edge of each tick
+      falling_edge: DISABLE     # Falling edges might result in lingering values
+    use_pcnt: true              # Use the hardware pulse counter explicitly
+    update_interval: $update_intvl
+    filters:
+      - multiply: 0.5           # Most fans provide 2 pulses per rotation
+
+  - platform: pulse_counter
+    name: "Fan 2 RPM"
+    id: "fan2_rpm"
+    unit_of_measurement: 'RPM'
+    pin:
+      number: GPIO26
+      inverted: false
+      mode: INPUT_PULLUP
+    count_mode:
+      rising_edge: INCREMENT
+      falling_edge: DISABLE
+    use_pcnt: true
+    update_interval: $update_intvl
+    filters:
+      - multiply: 0.5
+
+  - platform: pulse_counter
+    name: "Fan 3 RPM"
+    id: "fan3_rpm"
+    unit_of_measurement: 'RPM'
+    pin:
+      number: GPIO27
+      inverted: false
+      mode: INPUT_PULLUP
+    count_mode:
+      rising_edge: INCREMENT
+      falling_edge: DISABLE
+    use_pcnt: true
+    update_interval: $update_intvl
+    filters:
+      - multiply: 0.5
+
+
+    # This is a bit of overkill. It sends a human readable 
+  # uptime string 1h 41m 32s instead of 6092 seconds
+  - platform: uptime
+    name: $friendly_name Uptime
+    id: uptime_sensor
+    update_interval: 60s
+    entity_category: diagnostic
+    internal: true
+    on_raw_value:
+      then:
+        - text_sensor.template.publish:
+            id: uptime_human
+            # Custom C++ code to generate the result
+            state: !lambda |-
+              int seconds = round(id(uptime_sensor).raw_state);
+              int days = seconds / (24 * 3600);
+              seconds = seconds % (24 * 3600);
+              int hours = seconds / 3600;
+              seconds = seconds % 3600;
+              int minutes = seconds /  60;
+              seconds = seconds % 60;
+              return (
+                (days ? to_string(days) + "d " : "") +
+                (hours ? to_string(hours) + "h " : "") +
+                (minutes ? to_string(minutes) + "m " : "") +
+                (to_string(seconds) + "s")
+              ).c_str();
+
+
+binary_sensor:
+  - platform: gpio
+    pin: 
+      number: GPIO23
+      mode:
+        input: true
+        #pulldown: true
+    name: "Button LED strip toggle"
+    id: bin_btn1
+    filters:
+      - delayed_off: 1000ms
+    # link to (hidden) digital button
+    on_press:
+      - logger.log: "Physical button (LED toggle) pressed"
+      - button.press: btn_LEDstrip
+
+  - platform: gpio
+    pin: 
+      number: GPIO15
+      mode:
+        input: true
+        #pulldown: true
+    name: "Button 2"
+    id: bin_btn2
+    filters:
+      - delayed_off: 1000ms
+    on_press:
+      - logger.log: "Physical button (Reserve) pressed"
+
+  - platform: gpio
+    pin: 
+      number: GPIO34
+      mode:
+        input: true
+        #pulldown: true
+    name: "PIR Sensor"
+    device_class: motion
+    filters:
+      - delayed_off: 60000ms
+    on_press: 
+      # not a press action, but fine
+      then:
+        - logger.log: "Movement detected"
+
+
+output:
+  - platform: ledc
+    pin: GPIO4
+
+     # 25KHz is standard PWM PC fan frequency, minimises buzzing
+    frequency: "25000 Hz"
+    id: ventilation_fan_pwm
+
+    min_power: 20%
+    max_power: 100%
+    zero_means_zero: true
+
+  - platform: ledc
+    pin: GPIO18
+    frequency: "10000 Hz"
+    id: power_output
+
+  - platform: ledc
+    pin: GPIO19
+    frequency: "5000 Hz"
+    id: LEDstrip_pwm
+
+  - platform: template
+    id: proxy_output
+    type: float
+    write_action: 
+        lambda: |-
+          if (id(console_fan_aha_sw).state){
+            id(ventilation_fan_pwm).set_level(state);
+            id(fan_speed_pwm_voltage).publish_state(state * 100.0);
+          } else {
+            id(ventilation_fan_pwm).set_level(id(manual_fan_control).speed / 100.0);
+            id(fan_speed_pwm_voltage).publish_state(id(manual_fan_control).speed);
+          }
+
+fan:
+  - platform: speed
+    output: proxy_output
+    id: manual_fan_control
+    name: "Ventilation Fan Manual"
+
+
+light:
+  - platform: monochromatic
+    output: power_output
+    internal: true
+    name: "Reserve power output"
+    id: light_reserve
+
+  - platform: monochromatic
+    output: LEDstrip_pwm
+    name: "LED strip"
+    id: light_LEDstrip
+
+
+# Thanks to https://github.com/patrickcollins12/esphome-fan-controller/blob/master/console-fan.yaml
+climate:
+  - platform: pid
+    name: "Console Fan Thermostat"
+    id: console_thermostat
+    sensor: max_temp
+
+    # It is summer right now, so 30c is a decent target.
+    default_target_temperature: 50°C
+    cool_output: proxy_output
+    # cool_output: ventilation_fan_pwm
+
+    # ON state change, publish the values to the x_term numbers defined 
+    # above, so that they can be viewed in HA
+    on_state:
+      - sensor.template.publish:
+          id: p_term
+          state: !lambda 'return -id(console_thermostat).get_proportional_term() * 100.0;'
+      - sensor.template.publish:
+          id: i_term
+          state: !lambda 'return -id(console_thermostat).get_integral_term()* 100.0;'
+      - sensor.template.publish:
+          id: d_term
+          state: !lambda 'return -id(console_thermostat).get_derivative_term()* 100.0;'
+      - sensor.template.publish:
+          id: o_term
+          state: !lambda 'return -id(console_thermostat).get_output_value()* 100.0;'
+      - sensor.template.publish:
+          id: in_deadband_term
+          state: !lambda 'return id(console_thermostat).in_deadband();'
+      - sensor.template.publish:
+          id: e_term
+          state: !lambda 'return -id(console_thermostat).get_error_value();'
+        
+    # The extents of the HA Thermostat
+    visual:
+      min_temperature: 10 °C
+      max_temperature: 90 °C
+  
+    # See the README for setting up these parameters.
+    # These are over ridden by the number templates above.
+    control_parameters:
+      kp: 0.3
+      ki: 0.0015
+      kd: 0
+      max_integral: 0.0
+      output_averaging_samples: 1
+      derivative_averaging_samples: 5
+
+    # How to behave when close to the target temperature?
+    deadband_parameters:
+      threshold_high: 0.4°C
+      threshold_low: -1.0°C
+      kp_multiplier: 0.0
+      ki_multiplier: 0.04
+      kd_multiplier: 0.0
+      deadband_output_averaging_samples: 15
+
+switch:
+  # Expose an ESP32 restart button to HA
+  - platform: restart
+    name: ${friendly_name} ESP32 Restart
+    id: console_fan_restart
+    entity_category: config
+
+  - platform: template
+    name: "Temperature Hand⁄Auto"
+    id: console_fan_aha_sw
+    icon: "mdi:fan-auto"
+    optimistic: True
