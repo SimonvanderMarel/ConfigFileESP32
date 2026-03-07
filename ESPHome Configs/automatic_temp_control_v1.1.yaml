@@ -4,8 +4,6 @@ substitutions:
   update_intvl: 1000ms
   
 
-# iiyama-prolite-tf2234mc
-# modelno plc2234
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
@@ -65,19 +63,8 @@ web_server:
     username: user # !secret web_server_username
     password: password # !secret web_server_password
 
-globals:
-  - id: glb_PWM_A
-    type: float
-    restore_value: yes
-    initial_value: '0'
-  
-  - id: glb_PWM_HA
-    type: float
-    restore_value: yes
-    initial_value: '0'
 
 number:
-
   ## OPTIONAL:
   # RECEIVE KP, KI and KD parameters from input_text.kx helpers in 
   # Home Assistant. See the PID controller below
@@ -556,7 +543,7 @@ output:
     frequency: "25000 Hz"
     id: ventilation_fan_pwm
 
-    min_power: 20%
+    min_power: 10%
     max_power: 100%
     zero_means_zero: true
 
@@ -576,11 +563,15 @@ output:
     write_action: 
         lambda: |-
           if (id(console_fan_aha_sw).state){
-            id(ventilation_fan_pwm).set_level(state);
-            id(fan_speed_pwm_voltage).publish_state(state * 100.0);
-          } else {
+            if ((id(manual_fan_control).speed < 10.0) || (id(manual_fan_control).state == false)){
+              id(manual_fan_control).speed = 0.0;
+            }
             id(ventilation_fan_pwm).set_level(id(manual_fan_control).speed / 100.0);
             id(fan_speed_pwm_voltage).publish_state(id(manual_fan_control).speed);
+          } else {
+            id(ventilation_fan_pwm).set_level(state);
+            id(fan_speed_pwm_voltage).publish_state(state * 100.0);
+            id(manual_fan_control).speed = 100.0 * state;
           }
 
 fan:
@@ -608,11 +599,11 @@ climate:
   - platform: pid
     name: "Console Fan Thermostat"
     id: console_thermostat
+    
     sensor: max_temp
-
-    # It is summer right now, so 30c is a decent target.
     default_target_temperature: 50°C
     cool_output: proxy_output
+
     # cool_output: ventilation_fan_pwm
 
     # ON state change, publish the values to the x_term numbers defined 
@@ -641,6 +632,11 @@ climate:
     visual:
       min_temperature: 10 °C
       max_temperature: 90 °C
+      temperature_step:
+        target_temperature: 0.5
+        current_temperature: 0.1
+      min_humidity: 30%
+      max_humidity: 99%
   
     # See the README for setting up these parameters.
     # These are over ridden by the number templates above.
@@ -669,7 +665,7 @@ switch:
     entity_category: config
 
   - platform: template
-    name: "Temperature Hand⁄Auto"
+    name: "Temperature Auto⁄Hand"
     id: console_fan_aha_sw
     icon: "mdi:fan-auto"
     optimistic: True
